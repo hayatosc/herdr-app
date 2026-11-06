@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const source = await readFile(new URL("../defaults/mods/files/main.js", import.meta.url), "utf8");
 const directorySource = source.slice(source.indexOf("async function directory("), source.indexOf("\nexport default class"));
-const directory = new Function("exec", "window", `${directorySource}; return directory;`)(
+const directory = new Function("exec", "window", "settings", `${directorySource}; return directory;`)(
   async (command: string, args: string[]) => {
     // Hidden like the app's spawns: a visible console would give PowerShell UTF-8 and hide code page bugs.
     const p = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe", windowsHide: true });
@@ -13,6 +13,7 @@ const directory = new Function("exec", "window", `${directorySource}; return dir
     return { code, stdout, stderr };
   },
   () => ({ platform: process.platform === "win32" ? "windows" : process.platform }),
+  () => ({}),
 );
 
 test("Files lists literal folder names, not shell expressions", async () => {
@@ -86,5 +87,30 @@ test("Files follows directory links one level at a time", async () => {
     expect(await readFile(join(root, ".kb", "0.9.0", "STORY.md"), "utf8")).toBe("story preview");
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Files uses guest shell only for WSL or remote folders on Windows", async () => {
+  for (const [platform, wsl, on, command] of [
+    ["windows", null, null, "powershell"],
+    ["windows", "Ubuntu", null, "sh"],
+    ["windows", null, "remote", "sh"],
+    ["linux", null, null, "sh"],
+    ["macos", null, null, "sh"],
+  ]) {
+    const calls: [string, string[], unknown][] = [];
+    const list = new Function("exec", "window", "settings", `${directorySource}; return directory;`)(
+      async (name: string, args: string[], options: unknown) => {
+        calls.push([name, args, options]);
+        return { code: 0, stdout: name === "sh" ? "f\0note.txt\0" : '[{"name":"note.txt","dir":false}]', stderr: "" };
+      }, () => ({ platform }), () => ({ wsl }),
+    );
+    const path = "/home/O'Brien [literal]/中文";
+    expect(await list(path, on)).toEqual([{ name: "note.txt", dir: false }]);
+    expect(calls[0][0]).toBe(command);
+    if (command === "sh") {
+      expect(calls[0][1].at(-1)).toBe(path);
+      expect(calls[0][2]).toEqual({ on });
+    }
   }
 });

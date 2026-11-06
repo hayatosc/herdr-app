@@ -96,7 +96,7 @@ pub fn installed(commands: &[String], on: Option<&str>) -> Vec<String> {
             let argv = crate::remote_shell::check(commands);
             crate::mods::run_on(m, &argv[0], &argv[1..]).unwrap_or_default()
         }
-        None if cfg!(windows) => {
+        None if cfg!(windows) && crate::wsl::active().is_none() => {
             let list = commands.iter().map(|c| format!("'{}'", c.replace('\'', "''"))).collect::<Vec<_>>().join(",");
             let script = format!("foreach($c in @({list})){{ if(Get-Command $c -ErrorAction SilentlyContinue){{ \"herdr-has:$c\" }} }}");
             crate::mods::run_here(&crate::window::shell(), &["-NoLogo".into(), "-Command".into(), script]).unwrap_or_default()
@@ -104,7 +104,8 @@ pub fn installed(commands: &[String], on: Option<&str>) -> Vec<String> {
         None => {
             let shell = crate::window::shell();
             let line = installed_line(commands, base(&shell) == "fish");
-            crate::mods::run_here(&shell, &["-ic".into(), line]).unwrap_or_default()
+            let flag = if crate::wsl::active().is_some() { "-lic" } else { "-ic" };
+            crate::mods::run_here(&shell, &[flag.into(), line]).unwrap_or_default()
         }
     };
     let found: std::collections::HashSet<&str> = out.split("herdr-has:").skip(1).filter_map(|s| s.split_whitespace().next()).collect();
